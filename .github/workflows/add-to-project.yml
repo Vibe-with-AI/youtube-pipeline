@@ -1,0 +1,97 @@
+name: Add Issue to Project
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add-to-project:
+    name: Add issue to project
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add Issue to Project
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_ID: ${{ github.event.issue.node_id }}
+        run: |
+          # Get the project ID for "Content Roadmap"
+          project_id=$(gh api graphql -f query='
+            query($owner: String!, $repo: String!) {
+              repository(owner: $owner, name: $repo) {
+                projectsV2(first: 10) {
+                  nodes {
+                    id
+                    title
+                  }
+                }
+              }
+            }' -f owner="${{ github.repository_owner }}" -f repo="${{ github.event.repository.name }}" --jq '.data.repository.projectsV2.nodes[] | select(.title=="Content Roadmap") | .id')
+
+          # Add issue to project
+          item_id=$(gh api graphql -f query='
+            mutation($project: ID!, $content: ID!) {
+              addProjectV2ItemById(input: {projectId: $project, contentId: $content}) {
+                item {
+                  id
+                }
+              }
+            }' -f project="$project_id" -f content="$ISSUE_ID" --jq '.data.addProjectV2ItemById.item.id')
+
+          # Get the status field ID
+          status_field_id=$(gh api graphql -f query='
+            query($project: ID!) {
+              node(id: $project) {
+                ... on ProjectV2 {
+                  fields(first: 10) {
+                    nodes {
+                      ... on ProjectV2SingleSelectField {
+                        id
+                        name
+                        options {
+                          id
+                          name
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f project="$project_id" --jq '.data.node.fields.nodes[] | select(.name=="Status") | .id')
+
+          # Get the "To Outline" option ID
+          outline_option_id=$(gh api graphql -f query='
+            query($project: ID!) {
+              node(id: $project) {
+                ... on ProjectV2 {
+                  fields(first: 10) {
+                    nodes {
+                      ... on ProjectV2SingleSelectField {
+                        id
+                        name
+                        options {
+                          id
+                          name
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f project="$project_id" --jq '.data.node.fields.nodes[] | select(.name=="Status") | .options[] | select(.name=="To Outline") | .id')
+
+          # Set status to "To Outline"
+          gh api graphql -f query='
+            mutation($project: ID!, $item: ID!, $field: ID!, $value: String!) {
+              updateProjectV2ItemFieldValue(input: {
+                projectId: $project
+                itemId: $item
+                fieldId: $field
+                value: {
+                  singleSelectOptionId: $value
+                }
+              }) {
+                projectV2Item {
+                  id
+                }
+              }
+            }' -f project="$project_id" -f item="$item_id" -f field="$status_field_id" -f value="$outline_option_id"
